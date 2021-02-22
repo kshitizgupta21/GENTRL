@@ -10,7 +10,6 @@ setup(
         'numpy>=1.15',
         'pandas>=0.23',
         'scipy>=1.1.0',
-        'torch==1.0.1',
         'molsets==0.1.3'
     ],
     description='Generative Tensorial Reinforcement Learning (GENTRL)',
