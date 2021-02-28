@@ -103,11 +103,9 @@ class LP(nn.Module):
 
     @staticmethod
     def __make_contr_vec(x, var, missed, means, log_stds):
-        # here x is cuda tensor, var is list element, missed is None, 
-        # means and log_stds are either None or a tensor
+        print("This is x", x)
         if missed is None:
-            missed = torch.isnan(x)
-            x[missed] = 0
+            x[x != x] = 0
         if var[0] == 'd':
             contr_vect = torch.zeros(x.shape[0], var[1])
             contr_vect[missed] = 1
@@ -155,16 +153,18 @@ class LP(nn.Module):
         perm_log_stds = [self.log_stds[i] for i in self.order]
 
         # compute log probabilities
-        log_probs = torch.zeros(num_objects, device=x.device)
+        log_probs = torch.zeros(num_objects).to(x.device)
 
         if self.tt_type == 'usual':
-            pref = torch.ones(num_objects, 1, perm_cores[0].shape[1], device=x.device)
-            norm_pref = torch.ones(num_objects, 1, perm_cores[0].shape[1], device=x.device)
+            pref = torch.ones(num_objects, 1, perm_cores[0].shape[1])
+            norm_pref = torch.ones(num_objects, 1, perm_cores[0].shape[1])
         elif self.tt_type == 'ring':
-            pref = torch.eye(perm_cores[0].shape[1], device=x.device)
+            pref = torch.eye(perm_cores[0].shape[1])
             pref = pref[None, :, :].repeat(num_objects, 1, 1)
-            norm_pref = torch.eye(perm_cores[0].shape[1], device=x.device)
 
+            norm_pref = torch.eye(perm_cores[0].shape[1])
+        pref = pref.to(x.device)
+        norm_pref = norm_pref.to(x.device)
 
         for i, (core, var) in enumerate(zip(perm_cores, perm_dist_descr)):
             core = self._pos_func(core)
@@ -196,7 +196,8 @@ class LP(nn.Module):
             pref = pref / cur_prob_addition[:, None, None]
 
         if self.tt_type == 'ring':
-            eye = torch.eye(perm_cores[-1].shape[-1], device=x.device)[None, :, :]
+            eye = torch.eye(perm_cores[-1].shape[-1])[None, :, :]
+            eye = eye.to(x.device)
             cur_prob_addition = (pref * eye).sum(dim=-1).sum(dim=-1)
             cur_div = (norm_pref * eye).sum(dim=-1).sum(dim=-1) + self.eps
             cur_prob_addition = cur_prob_addition / cur_div

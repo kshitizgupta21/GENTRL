@@ -7,6 +7,7 @@ import pickle
 
 from moses.metrics.utils import get_mol
 
+
 class TrainStats():
     def __init__(self):
         self.stats = dict()
@@ -24,10 +25,13 @@ class TrainStats():
 
     def print(self):
         for key in self.stats.keys():
-            avg = sum(self.stats[key]) / len(self.stats[key])
-            print(str(key) + ": {:4.4};".format(avg), end='')
+            print(str(key) + ": {:4.4};".format(
+                sum(self.stats[key]) / len(self.stats[key])
+            ), end='')
+
         print()
-        
+
+
 class GENTRL(nn.Module):
     '''
     GENTRL model
@@ -44,9 +48,8 @@ class GENTRL(nn.Module):
 
         self.latent_descr = latent_descr
         self.feature_descr = feature_descr
-        # internal dimension of Tensor-Train decomposition
+
         self.tt_int = tt_int
-        # 'usual' or 'ring'; type of Tensor Train decomposition
         self.tt_type = tt_type
 
         self.lp = LP(distr_descr=self.latent_descr + self.feature_descr,
@@ -55,9 +58,8 @@ class GENTRL(nn.Module):
         self.beta = beta
         self.gamma = gamma
 
-    def get_elbo(self, x, x_lens, y):
-        
-        means, log_stds = torch.split(self.enc.encode(x, x_lens),
+    def get_elbo(self, x, y):
+        means, log_stds = torch.split(self.enc.encode(x),
                                       len(self.latent_descr), dim=1)
         latvar_samples = (means + torch.randn_like(log_stds) *
                           torch.exp(0.5 * log_stds))
@@ -85,18 +87,38 @@ class GENTRL(nn.Module):
         elbo = rec_part - self.beta * kldiv_part
         elbo = elbo + self.gamma * log_p_y_by_z.mean()
 
-        # remove .detach().cpu().numpy() calls
         return elbo, {
-            'loss': -elbo.detach(),
-            'rec': rec_part.detach(),
-            'kl': kldiv_part.detach(),
-            'log_p_y_by_z': log_p_y_by_z.mean().detach(),
-            'log_p_z_by_y': log_p_z_by_y.mean().detach()
+            'loss': -elbo.detach().cpu().numpy(),
+            'rec': rec_part.detach().cpu().numpy(),
+            'kl': kldiv_part.detach().cpu().numpy(),
+            'log_p_y_by_z': log_p_y_by_z.mean().detach().cpu().numpy(),
+            'log_p_z_by_y': log_p_z_by_y.mean().detach().cpu().numpy()
         }
+
+    def save(self, folder_to_save='./'):
+        if folder_to_save[-1] != '/':
+            folder_to_save = folder_to_save + '/'
+        torch.save(self.enc.state_dict(), folder_to_save + 'enc.model')
+        torch.save(self.dec.state_dict(), folder_to_save + 'dec.model')
+        torch.save(self.lp.state_dict(), folder_to_save + 'lp.model')
+
+        pickle.dump(self.lp.order, open(folder_to_save + 'order.pkl', 'wb'))
+
+    def load(self, folder_to_load='./'):
+        if folder_to_load[-1] != '/':
+            folder_to_load = folder_to_load + '/'
+
+        order = pickle.load(open(folder_to_load + 'order.pkl', 'rb'))
+        self.lp = LP(distr_descr=self.latent_descr + self.feature_descr,
+                     tt_int=self.tt_int, tt_type=self.tt_type,
+                     order=order)
+
+        self.enc.load_state_dict(torch.load(folder_to_load + 'enc.model'))
+        self.dec.load_state_dict(torch.load(folder_to_load + 'dec.model'))
+        self.lp.load_state_dict(torch.load(folder_to_load + 'lp.model'))
 
     def train_as_vaelp(self, train_loader, num_epochs=10,
                        verbose_step=50, lr=1e-3):
-        
         optimizer = optim.Adam(self.parameters(), lr=lr)
 
         global_stats = TrainStats()
@@ -105,38 +127,35 @@ class GENTRL(nn.Module):
         epoch_i = 0
         to_reinit = False
         buf = None
-        
         while epoch_i < num_epochs:
-            # iteration counter
             i = 0
             if verbose_step:
                 print("Epoch", epoch_i, ":")
 
-            # if it's the 1st or 2nd or 6th epoch then
-            # we set to_reinit to True
             if epoch_i in [0, 1, 5]:
                 to_reinit = True
 
             epoch_i += 1
-            for x, x_lens, y in train_loader:
-                # (x=tokens tensor, x_lens=lengths tensor, y=prop (plogp) values tensor)
-                #if verbose_step:
-                #    print("!", end='')
+
+            for x_batch, y_batch in train_loader:
+                if verbose_step:
+                    print("!", end='')
 
                 i += 1
-                if len(y.shape) == 1:
+
+                y_batch = y_batch.float().to(self.lp.tt_cores[0].device)
+                if len(y_batch.shape) == 1:
                     y_batch = y_batch.view(-1, 1).contiguous()
 
                 if to_reinit:
-                    # if buffer is None or if buf has less than 5000 elements
                     if (buf is None) or (buf.shape[0] < 5000):
-                        enc_out = self.enc.encode(x, x_lens)
+                        enc_out = self.enc.encode(x_batch)
                         means, log_stds = torch.split(enc_out,
                                                       len(self.latent_descr),
                                                       dim=1)
                         z_batch = (means + torch.randn_like(log_stds) *
                                    torch.exp(0.5 * log_stds))
-                        cur_batch = torch.cat([z_batch, y], dim=1)
+                        cur_batch = torch.cat([z_batch, y_batch], dim=1)
                         if buf is None:
                             buf = cur_batch
                         else:
@@ -145,13 +164,13 @@ class GENTRL(nn.Module):
                         descr = len(self.latent_descr) * [0]
                         descr += len(self.feature_descr) * [1]
                         self.lp.reinit_from_data(buf, descr)
-                        self.lp.to('cuda')
+                        self.lp.cuda()
                         buf = None
                         to_reinit = False
 
                     continue
 
-                elbo, cur_stats = self.get_elbo(x, x_lens, y)
+                elbo, cur_stats = self.get_elbo(x_batch, y_batch)
                 local_stats.update(cur_stats)
                 global_stats.update(cur_stats)
 
@@ -160,8 +179,6 @@ class GENTRL(nn.Module):
                 loss.backward()
                 optimizer.step()
 
-                # if verbose_step is non-zero and i is a multiple 
-                # of verbose_step then we print 
                 if verbose_step and i % verbose_step == 0:
                     local_stats.print()
                     local_stats.reset()
@@ -239,26 +256,3 @@ class GENTRL(nn.Module):
         smiles = self.dec.sample(50, z, argmax=False)
 
         return smiles
-    
-    
-    def save(self, folder_to_save='./'):
-        if folder_to_save[-1] != '/':
-            folder_to_save = folder_to_save + '/'
-        torch.save(self.enc.state_dict(), folder_to_save + 'enc.model')
-        torch.save(self.dec.state_dict(), folder_to_save + 'dec.model')
-        torch.save(self.lp.state_dict(), folder_to_save + 'lp.model')
-
-        pickle.dump(self.lp.order, open(folder_to_save + 'order.pkl', 'wb'))
-
-    def load(self, folder_to_load='./'):
-        if folder_to_load[-1] != '/':
-            folder_to_load = folder_to_load + '/'
-
-        order = pickle.load(open(folder_to_load + 'order.pkl', 'rb'))
-        self.lp = LP(distr_descr=self.latent_descr + self.feature_descr,
-                     tt_int=self.tt_int, tt_type=self.tt_type,
-                     order=order)
-
-        self.enc.load_state_dict(torch.load(folder_to_load + 'enc.model'))
-        self.dec.load_state_dict(torch.load(folder_to_load + 'dec.model'))
-        self.lp.load_state_dict(torch.load(folder_to_load + 'lp.model'))

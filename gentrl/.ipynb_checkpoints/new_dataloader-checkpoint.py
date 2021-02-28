@@ -1,6 +1,6 @@
 import torch
 from torch.utils.data import TensorDataset
-from gentrl.tokenizer import encode
+from gentrl import tokenizer
 import pandas as pd
 import numpy as np
 
@@ -26,7 +26,7 @@ class NewMolecularDataset:
             cur_smiles = list(cur_df[source_descr['smiles']].values)
             num_smiles = len(cur_smiles)
             num_props = len(props)
-            cur_props = torch.zeros(num_smiles, num_props, device=self.device)
+            cur_props = torch.zeros(num_smiles, num_props, device=self.device) # by default it's float32 tensor
             cur_missings = torch.zeros(num_smiles, num_props, dtype=torch.int64, device=self.device)
 
             for i, prop in enumerate(props):
@@ -51,14 +51,13 @@ class NewMolecularDataset:
             self.source_missings.append(cur_missings)
             self.source_probs.append(source_descr['prob'])
 
-            self.len = max(self.len, int(num_smiles / source_descr['prob']))
+            self.len = max(self.len,
+                           int(num_smiles) / source_descr['prob']))
 
         self.source_probs = np.array(self.source_probs).astype(np.float)
 
         self.source_probs /= self.source_probs.sum()
         
-        
-    def create_tensor_dataset(self):    
         trial = np.random.random()
 
         s = 0
@@ -94,8 +93,13 @@ class NewMolecularDataset:
         # we need to tokenize the SMILES string in sm_list and convert the tokens
         # to indices
         
-        tokens, smile_lens = encode(sm_list, device=self.device)
-
+        tokens, smile_lens = tokenizer.encode(sm_list)
+        
+        # move the tokens, smile_lens and y tensors to device (CPU or GPU)
+        tokens.to(self.device)
+        smile_lens.to(self.device)
+        y.to(self.device)
+        
         dataset = TensorDataset(tokens, smile_lens, y)
         
         return dataset
