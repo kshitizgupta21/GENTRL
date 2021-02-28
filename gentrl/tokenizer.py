@@ -67,7 +67,7 @@ def encode(sm_list, pad_size=50):
         tokens += (pad_size - len(tokens)) * [2]
         res.append(tokens)
 
-    return torch.tensor(res).long(), lens
+    return torch.tensor(res), lens
 
 
 def decode(tokens_tensor):

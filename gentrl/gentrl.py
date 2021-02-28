@@ -48,8 +48,9 @@ class GENTRL(nn.Module):
 
         self.latent_descr = latent_descr
         self.feature_descr = feature_descr
-
+        # internal dimension of Tensor-Train decomposition
         self.tt_int = tt_int
+        # 'usual' or 'ring'; type of Tensor Train decomposition
         self.tt_type = tt_type
 
         self.lp = LP(distr_descr=self.latent_descr + self.feature_descr,
@@ -59,6 +60,7 @@ class GENTRL(nn.Module):
         self.gamma = gamma
 
     def get_elbo(self, x, y):
+        
         means, log_stds = torch.split(self.enc.encode(x),
                                       len(self.latent_descr), dim=1)
         latvar_samples = (means + torch.randn_like(log_stds) *
@@ -132,18 +134,21 @@ class GENTRL(nn.Module):
             if verbose_step:
                 print("Epoch", epoch_i, ":")
 
+            # if it's the 1st or 2nd or 6th epoch then
+            # we set to_reinit to True
             if epoch_i in [0, 1, 5]:
                 to_reinit = True
 
             epoch_i += 1
-
+            iteration_counter = 0
             for x_batch, y_batch in train_loader:
+                # (SMILE strings, Their prop (plogp) values)
                 if verbose_step:
                     print("!", end='')
 
                 i += 1
-
-                y_batch = y_batch.float().to(self.lp.tt_cores[0].device)
+                # sending the y_batch tensor to GPU
+                y_batch = y_batch.to(self.lp.tt_cores[0].device)
                 if len(y_batch.shape) == 1:
                     y_batch = y_batch.view(-1, 1).contiguous()
 

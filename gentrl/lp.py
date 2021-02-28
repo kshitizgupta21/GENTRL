@@ -104,7 +104,7 @@ class LP(nn.Module):
     @staticmethod
     def __make_contr_vec(x, var, missed, means, log_stds):
         if missed is None:
-            missed = torch.isnan(x).byte()
+            missed = torch.isnan(x)
             x[missed] = 0
         if var[0] == 'd':
             contr_vect = torch.zeros(x.shape[0], var[1])
